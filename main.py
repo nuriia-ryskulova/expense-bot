@@ -168,9 +168,22 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text == "📊 Статистика":
         income = get_income(user_id)
         limit_amount = get_limit(user_id)
+        spent = get_total_expenses(user_id)
+        remaining = limit_amount - spent
+        can_save = income - spent
+
+        stats_text = (
+            f"*📊 Статистика*\n\n"
+            f"Доход: {income}\n"
+            f"Лимит: {limit_amount}\n"
+            f"Потрачено: {spent}\n"
+            f"Осталось: {remaining}\n\n"
+            f"Можно отложить: {can_save}"
+        )
 
         await update.message.reply_text(
-            f"Доход: {income}\nЛимит: {limit_amount}",
+            stats_text,
+            parse_mode="Markdown",
             reply_markup=get_keyboard(),
         )
         return
