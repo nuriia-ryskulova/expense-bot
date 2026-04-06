@@ -1,8 +1,12 @@
+import logging
 import os
+import threading
 from dotenv import load_dotenv
+from flask import Flask
 from telegram import Update, ReplyKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -10,6 +14,12 @@ from telegram.ext import (
 )
 
 from db import init_db, save_income, get_income, save_limit, get_limit
+
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO,
+)
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 TOKEN = os.getenv("BOT_TOKEN")
@@ -44,6 +54,24 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Обрабатывает нажатия Inline-кнопок (CallbackQuery)."""
+    query = update.callback_query
+    if query is None:
+        logger.warning("handle_callback: callback_query is None")
+        return
+    logger.info(
+        "CallbackQuery: user_id=%s data=%r id=%s",
+        query.from_user.id if query.from_user else None,
+        query.data,
+        query.id,
+    )
+    try:
+        await query.answer()
+    except Exception:
+        logger.exception("query.answer() failed")
+
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip()
@@ -67,7 +95,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"Доход сохранен: {income}", reply_markup=get_keyboard()
             )
-        except:
+        except Exception:
+            logger.exception("waiting_for_income parse error")
             await update.message.reply_text("Введите число")
         return
 
@@ -80,7 +109,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"Лимит сохранен: {limit_amount}", reply_markup=get_keyboard()
             )
-        except:
+        except Exception:
+            logger.exception("waiting_for_limit parse error")
             await update.message.reply_text("Введите число")
         return
 
@@ -95,15 +125,35 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+def run_http_server():
+    port = int(os.environ.get("PORT", "10000"))
+    http_app = Flask(__name__)
+
+    @http_app.get("/")
+    def health():
+        return "ok", 200
+
+    logger.info("Flask health server listening on 0.0.0.0:%s", port)
+    http_app.run(host="0.0.0.0", port=port, threaded=True, use_reloader=False)
+
+
 def main():
+    if not TOKEN:
+        logger.error("BOT_TOKEN is not set")
+        raise SystemExit(1)
+
     init_db()
+
+    threading.Thread(target=run_http_server, daemon=True).start()
 
     app = ApplicationBuilder().token(TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("Бот запущен...")
+    logger.info("Бот запущен (polling)...")
+    # allowed_updates по умолчанию None — приходят все типы, включая callback_query
     app.run_polling()
 
 
