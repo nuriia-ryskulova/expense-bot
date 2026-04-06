@@ -1,4 +1,5 @@
 import sqlite3
+from datetime import datetime, timezone
 
 
 def get_connection():
@@ -79,3 +80,30 @@ def get_limit(user_id):
 
     conn.close()
     return result[0] if result else 0
+
+
+def get_total_expenses(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE user_id = ?",
+        (user_id,),
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return float(row[0]) if row else 0.0
+
+
+def save_expense(user_id, amount, category):
+    conn = get_connection()
+    cursor = conn.cursor()
+    created_at = datetime.now(timezone.utc).isoformat()
+    cursor.execute(
+        """
+        INSERT INTO expenses (user_id, amount, category, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (user_id, amount, category, created_at),
+    )
+    conn.commit()
+    conn.close()

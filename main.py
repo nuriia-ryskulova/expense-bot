@@ -3,7 +3,7 @@ import os
 import threading
 from dotenv import load_dotenv
 from flask import Flask
-from telegram import Update, ReplyKeyboardMarkup
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, Update
 from telegram.ext import (
     ApplicationBuilder,
     CallbackQueryHandler,
@@ -13,7 +13,15 @@ from telegram.ext import (
     filters,
 )
 
-from db import init_db, save_income, get_income, save_limit, get_limit
+from db import (
+    get_income,
+    get_limit,
+    get_total_expenses,
+    init_db,
+    save_expense,
+    save_income,
+    save_limit,
+)
 
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
@@ -47,6 +55,14 @@ def get_keyboard():
     )
 
 
+def get_category_inline_keyboard():
+    """У каждой inline-кнопки задан callback_data (префикс c: + индекс)."""
+    rows = []
+    for i, label in enumerate(CATEGORIES):
+        rows.append([InlineKeyboardButton(label, callback_data=f"c:{i}")])
+    return InlineKeyboardMarkup(rows)
+
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "Привет! Я помогу тебе отслеживать расходы 💸",
@@ -55,26 +71,61 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Обрабатывает нажатия Inline-кнопок (CallbackQuery)."""
+    """Inline-кнопки: сначала answer() — иначе «часики» на клиенте."""
     query = update.callback_query
     if query is None:
         logger.warning("handle_callback: callback_query is None")
         return
+
+    await query.answer()
+
+    data = query.data or ""
     logger.info(
         "CallbackQuery: user_id=%s data=%r id=%s",
         query.from_user.id if query.from_user else None,
-        query.data,
+        data,
         query.id,
     )
-    try:
-        await query.answer()
-    except Exception:
-        logger.exception("query.answer() failed")
+
+    if data.startswith("c:"):
+        try:
+            idx = int(data[2:])
+        except ValueError:
+            logger.warning("bad callback_data: %r", data)
+            return
+        if not (0 <= idx < len(CATEGORIES)):
+            return
+        category = CATEGORIES[idx]
+        uid = query.from_user.id
+        user_state[uid] = ("expense_amount", category)
+        await query.message.reply_text(
+            f"Введи сумму расхода для категории «{category}»:",
+            reply_markup=get_keyboard(),
+        )
+        return
+
+    logger.warning("Неизвестный callback_data: %r", data)
 
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.message.from_user.id
     text = update.message.text.strip()
+
+    st = user_state.get(user_id)
+    if isinstance(st, tuple) and st[0] == "expense_amount":
+        category = st[1]
+        try:
+            amount = float(text.replace(",", "."))
+            save_expense(user_id, amount, category)
+            user_state[user_id] = None
+            await update.message.reply_text(
+                f"Записано: {amount} — {category}",
+                reply_markup=get_keyboard(),
+            )
+        except Exception:
+            logger.exception("expense_amount parse error")
+            await update.message.reply_text("Введите число")
+        return
 
     if text == "⚙️ Установить доход":
         user_state[user_id] = "waiting_for_income"
@@ -124,6 +175,31 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    if text == "➕ Добавить расход":
+        await update.message.reply_text(
+            "Выбери категорию:",
+            reply_markup=get_category_inline_keyboard(),
+        )
+        return
+
+    if text == "💰 Осталось":
+        spent = get_total_expenses(user_id)
+        limit_amount = get_limit(user_id)
+        income = get_income(user_id)
+        if limit_amount > 0:
+            remaining = limit_amount - spent
+            cap = limit_amount
+            cap_label = "Лимит"
+        else:
+            remaining = income - spent
+            cap = income
+            cap_label = "Доход"
+        await update.message.reply_text(
+            f"Потрачено: {spent}\n{cap_label}: {cap}\nОсталось: {remaining}",
+            reply_markup=get_keyboard(),
+        )
+        return
+
 
 def run_http_server():
     port = int(os.environ.get("PORT", "10000"))
@@ -153,7 +229,6 @@ def main():
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     logger.info("Бот запущен (polling)...")
-    # allowed_updates по умолчанию None — приходят все типы, включая callback_query
     app.run_polling()
 
 
