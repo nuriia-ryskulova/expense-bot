@@ -14,6 +14,7 @@ from telegram.ext import (
 )
 
 from db import (
+    get_expenses_by_category,
     get_income,
     get_limit,
     get_total_expenses,
@@ -56,7 +57,6 @@ def get_keyboard():
 
 
 def get_category_inline_keyboard():
-    """У каждой inline-кнопки задан callback_data (префикс c: + индекс)."""
     rows = []
     for i, label in enumerate(CATEGORIES):
         rows.append([InlineKeyboardButton(label, callback_data=f"c:{i}")])
@@ -71,7 +71,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Inline-кнопки: сначала answer() — иначе «часики» на клиенте."""
     query = update.callback_query
     if query is None:
         logger.warning("handle_callback: callback_query is None")
@@ -142,7 +141,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             income = float(text.replace(",", "."))
             save_income(user_id, income)
             user_state[user_id] = None
-
             await update.message.reply_text(
                 f"Доход сохранен: {income}", reply_markup=get_keyboard()
             )
@@ -156,7 +154,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             limit_amount = float(text.replace(",", "."))
             save_limit(user_id, limit_amount)
             user_state[user_id] = None
-
             await update.message.reply_text(
                 f"Лимит сохранен: {limit_amount}", reply_markup=get_keyboard()
             )
@@ -171,6 +168,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         spent = get_total_expenses(user_id)
         remaining = limit_amount - spent
         can_save = income - spent
+        by_category = get_expenses_by_category(user_id)
+
+        category_lines = ""
+        for category, amount in by_category:
+            category_lines += f"  • {category}: {amount}\n"
 
         stats_text = (
             f"*📊 Статистика*\n\n"
@@ -178,6 +180,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"Лимит: {limit_amount}\n"
             f"Потрачено: {spent}\n"
             f"Осталось: {remaining}\n\n"
+            f"*По категориям:*\n{category_lines}\n"
             f"Можно отложить: {can_save}"
         )
 

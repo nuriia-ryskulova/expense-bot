@@ -119,3 +119,24 @@ def save_expense(user_id, amount, category):
     conn.commit()
     cursor.close()
     conn.close()
+
+
+def get_expenses_by_category(user_id):
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """
+        SELECT category, COALESCE(SUM(amount), 0)
+        FROM expenses
+        WHERE user_id = %s
+        GROUP BY category
+        ORDER BY SUM(amount) DESC
+        """,
+        (user_id,),
+    )
+    rows = cursor.fetchall()
+
+    cursor.close()
+    conn.close()
+    return rows
