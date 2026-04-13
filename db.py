@@ -89,12 +89,19 @@ def get_limit(user_id):
 
 
 def get_total_expenses(user_id):
+    now = datetime.now(timezone.utc)
+    month_prefix = now.strftime("%Y-%m")
+
     conn = get_connection()
     cursor = conn.cursor()
 
     cursor.execute(
-        "SELECT COALESCE(SUM(amount), 0) FROM expenses WHERE user_id = %s",
-        (user_id,),
+        """
+        SELECT COALESCE(SUM(amount), 0)
+        FROM expenses
+        WHERE user_id = %s AND created_at LIKE %s
+        """,
+        (user_id, f"{month_prefix}%"),
     )
     row = cursor.fetchone()
 
@@ -122,6 +129,9 @@ def save_expense(user_id, amount, category):
 
 
 def get_expenses_by_category(user_id):
+    now = datetime.now(timezone.utc)
+    month_prefix = now.strftime("%Y-%m")
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -129,11 +139,11 @@ def get_expenses_by_category(user_id):
         """
         SELECT category, COALESCE(SUM(amount), 0)
         FROM expenses
-        WHERE user_id = %s
+        WHERE user_id = %s AND created_at LIKE %s
         GROUP BY category
         ORDER BY SUM(amount) DESC
         """,
-        (user_id,),
+        (user_id, f"{month_prefix}%"),
     )
     rows = cursor.fetchall()
 
